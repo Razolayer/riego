@@ -9,11 +9,6 @@
 <meta name="apple-mobile-web-app-title" content="Riego">
 <meta name="robots" content="noindex">
 <title>Riego</title>
-<!--
-  Control remoto vía ntfy.
-  El topic NO está en este archivo: va en el link, después del #
-  (https://.../#mi-topic). El fragmento no se envía al servidor de la página.
--->
 <style>
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 [hidden]{display:none!important}
@@ -41,16 +36,14 @@ width:200px;text-align:center}
 #log li{padding:6px 0;border-top:1px solid #222}
 #log time{color:#666;margin-right:6px}
 small{color:#666;text-align:center}
+#invalid{color:#888;margin:40px 0 0;text-align:center}
 </style>
 </head>
 <body>
 <h1>&#128167; Riego</h1>
 <div id="st"><span class="dot wait" id="dot"></span><span id="msg">Conectando...</span></div>
 
-<div class="box" id="topicbox" hidden>
-  <input id="topic" placeholder="Topic de ntfy" autocapitalize="off" autocomplete="off" spellcheck="false">
-  <button class="s" id="savetopic">Entrar</button>
-</div>
+<p id="invalid" hidden>Enlace inválido o vencido.</p>
 
 <div id="controls" hidden>
   <button class="s" id="off">APAGAR</button>
@@ -73,7 +66,10 @@ const SERVER = 'https://ntfy-me.com';
 const NO_REPLY_MS = 10000;
 const $ = id => document.getElementById(id);
 
-let topic = decodeURIComponent(location.hash.slice(1)).trim();
+let topic = '';
+try { topic = decodeURIComponent(location.hash.slice(1)).trim(); } catch (e) {}
+// Sin un link con formato válido no se muestra nada (ni pistas de cómo funciona)
+function validTopic(t) { return /^[a-z0-9][a-z0-9_-]{15,63}$/.test(t); }
 let on = false, offAt = 0, lastSeen = 0, waiting = null, es = null;
 let offline = false, noticeUntil = 0;
 
@@ -187,7 +183,6 @@ function subscribe() {
 }
 
 async function start() {
-  $('topicbox').hidden = true;
   $('controls').hidden = false;
   $('pin').value = load('pin');
   $('name').value = load('name');
@@ -210,20 +205,11 @@ $('big').onclick = () => {
 document.querySelectorAll('[data-s]').forEach(b => b.onclick = () => {
   const pin = needPin(); if (pin) send(by('pulso ' + b.dataset.s + ' ' + pin));
 });
-$('savetopic').onclick = () => {
-  topic = $('topic').value.trim();
-  if (!topic) return;
-  location.hash = encodeURIComponent(topic);
-  start();
-};
-window.addEventListener('hashchange', () => {
-  const t = decodeURIComponent(location.hash.slice(1)).trim();
-  if (t && t !== topic) { topic = t; start(); }
-});
-setInterval(render, 1000);
+window.addEventListener('hashchange', () => location.reload());
+if (validTopic(topic)) setInterval(render, 1000);
 
-if (topic) start();
-else { $('topicbox').hidden = false; show('Falta el topic: abrí el link completo o escribilo', 'bad'); }
+if (validTopic(topic)) start();
+else { $('st').hidden = true; $('invalid').hidden = false; }
 </script>
 </body>
 </html>
