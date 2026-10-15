@@ -29,6 +29,7 @@ color:#fff;background:#2b2b2b;box-shadow:0 0 0 6px #333;transition:.2s}
 button.s{padding:12px 18px;border-radius:12px;border:1px solid #444;background:#1d1d1d;color:#eee;font-size:16px}
 button:active{transform:scale(.96)}
 button:disabled{opacity:.5}
+.locked{opacity:.35;filter:grayscale(1)}
 #off{background:#2e7d32;border-color:#2e7d32;width:min(80vw,300px);font-size:20px;padding:16px;font-weight:600}
 .box{display:flex;gap:8px;flex-wrap:wrap;justify-content:center}
 input{padding:12px;border-radius:12px;border:1px solid #444;background:#1d1d1d;color:#eee;font-size:16px;
@@ -60,6 +61,7 @@ button.link{background:none;border:0;color:#64b5f6;font-size:14px;padding:4px 6p
     <button class="s" data-s="60">1 min</button>
   </div>
   <button class="s" id="beep">&#128276; Pitido de prueba</button>
+  <small id="testnote" hidden>Modo prueba: hoy solo funciona el pitido. Apagar sigue funcionando siempre.</small>
   <button class="s" id="ping">&#128225; Probar conexión</button>
   <div id="who" hidden>&#128100; <b id="whoname"></b> · &#128274; PIN guardado <button class="link" id="edit">cambiar</button></div>
   <div class="box" id="pinbox">
@@ -84,6 +86,8 @@ button.link{background:none;border:0;color:#64b5f6;font-size:14px;padding:4px 6p
 <script>
 const SERVER = 'https://ntfy.sh';
 const NO_REPLY_MS = 10000;
+// Modo prueba (temporal): solo pitido, sin activaciones largas. Poner en false para volver a la normalidad.
+const TEST_ONLY = true;
 const $ = id => document.getElementById(id);
 
 // Link: #<topic>[&n=<nombre>][&p=<pin>]. Lo que va después del # queda en el celu
@@ -121,6 +125,7 @@ function render() {
   if (on && offAt && rem === 0) on = false; // el corte automático ya debería haber actuado
   $('big').classList.toggle('on', on);
   $('big').textContent = on ? 'SONANDO' : 'ACTIVAR';
+  $('big').classList.toggle('locked', TEST_ONLY && !on); // sonando sigue sirviendo para apagar
   if (waiting || Date.now() < noticeUntil) return;
   if (offline) { show('El equipo no responde (¿sin luz o sin internet?)', 'bad'); return; }
   if (!lastSeen) { show('Esperando respuesta del equipo...', 'wait'); return; }
@@ -291,8 +296,13 @@ $('ping').onclick = () => send(by('ping'));
 $('beep').onclick = () => { const pin = needPin(); if (pin) send(by('pitido ' + pin)); };
 $('big').onclick = () => {
   if (on) return send(by('apagar'));
+  if (TEST_ONLY) return notice('Hoy solo está habilitado el pitido de prueba', 'wait');
   const pin = needPin(); if (pin) send(by('activar ' + pin));
 };
+if (TEST_ONLY) {
+  document.querySelectorAll('[data-s]').forEach(b => b.disabled = true);
+  $('testnote').hidden = false;
+}
 document.querySelectorAll('[data-s]').forEach(b => b.onclick = () => {
   const pin = needPin(); if (pin) send(by('pulso ' + b.dataset.s + ' ' + pin));
 });
