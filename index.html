@@ -130,6 +130,8 @@ function pretty(text) {
   }
   if ((r = text.match(/^Ya estaba apagada(?: \((.+)\))?/))) return 'Ya estaba apagada' + (r[1] ? ' · ' + r[1] : '');
   if ((r = text.match(/apagada \((.+)\)/))) return 'Alarma apagada · ' + r[1];
+  if ((r = text.match(/^Atención: la Pico se reinició \((.+?)\)/))) return '⚠ El equipo se reinició: ' + r[1];
+  if ((r = text.match(/^Pico conectada \(reinicio: (.+?)\)/))) return 'Equipo conectado (' + r[1] + ')';
   if (/^Pico conectada/.test(text)) return 'Equipo conectado';
   if ((r = text.match(/^Equipo en línea ✅ \(prueba de (.+?)\)/))) return 'Equipo en línea ✅ · prueba de ' + r[1];
   if (/^SABOTAJE/.test(text)) return '⚠ SABOTAJE: despegaron el equipo';
