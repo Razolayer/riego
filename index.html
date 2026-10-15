@@ -55,6 +55,7 @@ button.link{background:none;border:0;color:#64b5f6;font-size:14px;padding:4px 6p
     <button class="s" data-s="30">30 s</button>
     <button class="s" data-s="60">1 min</button>
   </div>
+  <button class="s" id="ping">&#128225; Probar conexión</button>
   <div id="who" hidden>&#128100; <b id="whoname"></b> · &#128274; PIN guardado <button class="link" id="edit">cambiar</button></div>
   <div class="box" id="pinbox">
     <input id="name" placeholder="Tu nombre" maxlength="24" autocomplete="name">
@@ -98,7 +99,7 @@ function remember() {
 
 function show(text, kind) { $('msg').textContent = text; $('dot').className = 'dot ' + kind; }
 // Aviso que no pisa el refresco de estado por unos segundos
-function notice(text) { show(text, 'bad'); noticeUntil = Date.now() + 5000; }
+function notice(text, kind) { show(text, kind || 'bad'); noticeUntil = Date.now() + 5000; }
 
 function render() {
   const rem = offAt ? Math.max(0, Math.round(offAt - Date.now() / 1000)) : 0;
@@ -130,6 +131,7 @@ function disguise(text) {
   if ((r = text.match(/^Ya estaba apagada(?: \((.+)\))?/))) return 'Ya estaba apagado' + (r[1] ? ' · ' + r[1] : '');
   if ((r = text.match(/apagada \((.+)\)/))) return 'Apagado · ' + r[1];
   if (/^Pico conectada/.test(text)) return 'Equipo conectado';
+  if ((r = text.match(/^Equipo en línea ✅ \(prueba de (.+?)\)/))) return 'Equipo en línea ✅ · prueba de ' + r[1];
   if (/^SABOTAJE/.test(text)) return '⚠ Sensor activado';
   if (/^Antisabotaje armado/.test(text)) return 'Sensor listo';
   if (/^Antisabotaje sin armar/.test(text)) return 'Sensor sin colocar';
@@ -158,6 +160,7 @@ function fromPico(m, live) {
   const myName = $('name').value.trim();
   const mine = live && waiting && (!myName || text.includes(myName));
   if (live && waiting) { clearTimeout(waiting); waiting = null; }
+  if (mine && /^Equipo en línea/.test(text)) { render(); notice('Equipo en línea ✅', 'ok'); return; }
   if (mine && /PIN incorrecto/.test(text)) { $('pin').value = ''; remember(); setEditing(true); notice('PIN incorrecto'); return; }
   render();
 }
@@ -172,7 +175,7 @@ function by(message) {
 async function send(message, priority) {
   if (navigator.vibrate) navigator.vibrate(40);
   const url = SERVER + '/' + encodeURIComponent(topic) + '/publish?message=' + encodeURIComponent(message) +
-              (priority ? '&priority=' + priority : '');
+              '&priority=' + (priority || 1); // los comandos no notifican: solo las respuestas de la Pico
   try {
     const r = await fetch(url, { cache: 'no-store' });
     if (!r.ok) throw new Error(r.status);
@@ -235,6 +238,7 @@ async function start() {
 }
 
 $('off').onclick = () => send(by('apagar'));
+$('ping').onclick = () => send(by('ping'));
 $('big').onclick = () => {
   if (on) return send(by('apagar'));
   const pin = needPin(); if (pin) send(by('activar ' + pin));
