@@ -6,9 +6,9 @@
 <meta name="theme-color" content="#111">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-title" content="Riego">
+<meta name="apple-mobile-web-app-title" content="Alarma Vecinal">
 <meta name="robots" content="noindex">
-<title>Riego</title>
+<title>Alarma Vecinal</title>
 <style>
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 [hidden]{display:none!important}
@@ -20,13 +20,13 @@ h1{margin:0;font-size:22px;font-weight:600;letter-spacing:.5px}
 #st{font-size:15px;color:#aaa;min-height:20px;text-align:center;max-width:320px}
 #big{width:min(70vw,260px);aspect-ratio:1;border-radius:50%;border:0;font-size:26px;font-weight:700;
 color:#fff;background:#2b2b2b;box-shadow:0 0 0 6px #333;transition:.2s}
-#big.on{background:#1976d2;box-shadow:0 0 0 6px #64b5f6,0 0 40px #42a5f5;animation:p 1.6s infinite}
-@keyframes p{50%{box-shadow:0 0 0 10px #64b5f6,0 0 60px #42a5f5}}
+#big.on{background:#d32f2f;box-shadow:0 0 0 6px #ff6b6b,0 0 40px #f44;animation:p 1s infinite}
+@keyframes p{50%{box-shadow:0 0 0 10px #ff6b6b,0 0 70px #f44}}
 .row{display:flex;gap:10px;flex-wrap:wrap;justify-content:center}
 button.s{padding:12px 18px;border-radius:12px;border:1px solid #444;background:#1d1d1d;color:#eee;font-size:16px}
 button:active{transform:scale(.96)}
 button:disabled{opacity:.5}
-#off{background:#455a64;border-color:#455a64;width:min(80vw,300px);font-size:20px;padding:16px;font-weight:600}
+#off{background:#2e7d32;border-color:#2e7d32;width:min(80vw,300px);font-size:20px;padding:16px;font-weight:600}
 .box{display:flex;gap:8px;flex-wrap:wrap;justify-content:center}
 input{padding:12px;border-radius:12px;border:1px solid #444;background:#1d1d1d;color:#eee;font-size:16px;
 width:200px;text-align:center}
@@ -42,14 +42,14 @@ button.link{background:none;border:0;color:#64b5f6;font-size:14px;padding:4px 6p
 </style>
 </head>
 <body>
-<h1>&#128167; Riego</h1>
+<h1>&#128680; Alarma Vecinal</h1>
 <div id="st"><span class="dot wait" id="dot"></span><span id="msg">Conectando...</span></div>
 
 <p id="invalid" hidden>Enlace inválido o vencido.</p>
 
 <div id="controls" hidden>
   <button class="s" id="off">APAGAR</button>
-  <button id="big">ENCENDER</button>
+  <button id="big">ACTIVAR</button>
   <div class="row">
     <button class="s" data-s="5">5 s</button>
     <button class="s" data-s="30">30 s</button>
@@ -59,7 +59,7 @@ button.link{background:none;border:0;color:#64b5f6;font-size:14px;padding:4px 6p
   <div id="who" hidden>&#128100; <b id="whoname"></b> · &#128274; PIN guardado <button class="link" id="edit">cambiar</button></div>
   <div class="box" id="pinbox">
     <input id="name" placeholder="Tu nombre" maxlength="24" autocomplete="name">
-    <input id="pin" type="password" inputmode="numeric" placeholder="PIN (para encender)">
+    <input id="pin" type="password" inputmode="numeric" placeholder="PIN (para activar)">
     <button class="s" id="savewho">Listo</button>
   </div>
   <ul id="log"></ul>
@@ -105,11 +105,11 @@ function render() {
   const rem = offAt ? Math.max(0, Math.round(offAt - Date.now() / 1000)) : 0;
   if (on && offAt && rem === 0) on = false; // el corte automático ya debería haber actuado
   $('big').classList.toggle('on', on);
-  $('big').textContent = on ? 'ENCENDIDO' : 'ENCENDER';
+  $('big').textContent = on ? 'SONANDO' : 'ACTIVAR';
   if (waiting || Date.now() < noticeUntil) return;
   if (offline) { show('El equipo no responde (¿sin luz o sin internet?)', 'bad'); return; }
   if (!lastSeen) { show('Esperando respuesta del equipo...', 'wait'); return; }
-  show(on ? (rem ? 'Encendido, se corta en ' + rem + ' s' : 'Encendido') : 'Apagado', 'ok');
+  show(on ? (rem ? 'ACTIVA, se apaga en ' + rem + ' s' : 'ACTIVA') : 'En reposo', 'ok');
 }
 
 function addLog(text, t) {
@@ -121,24 +121,24 @@ function addLog(text, t) {
   while ($('log').children.length > 6) $('log').lastChild.remove();
 }
 
-// Texto neutro para los mensajes del equipo
-function disguise(text) {
+// Texto corto para el historial a partir de los mensajes del equipo
+function pretty(text) {
   let r;
   if (/ACTIVADA/.test(text)) {
     r = text.match(/desde (.+?) \(se apaga en (\d+) s\)/);
-    return 'Encendido' + (r ? ' por ' + r[2] + ' s · ' + r[1] : '');
+    return '🚨 Alarma activada' + (r ? ' por ' + r[2] + ' s · ' + r[1] : '');
   }
-  if ((r = text.match(/^Ya estaba apagada(?: \((.+)\))?/))) return 'Ya estaba apagado' + (r[1] ? ' · ' + r[1] : '');
-  if ((r = text.match(/apagada \((.+)\)/))) return 'Apagado · ' + r[1];
+  if ((r = text.match(/^Ya estaba apagada(?: \((.+)\))?/))) return 'Ya estaba apagada' + (r[1] ? ' · ' + r[1] : '');
+  if ((r = text.match(/apagada \((.+)\)/))) return 'Alarma apagada · ' + r[1];
   if (/^Pico conectada/.test(text)) return 'Equipo conectado';
   if ((r = text.match(/^Equipo en línea ✅ \(prueba de (.+?)\)/))) return 'Equipo en línea ✅ · prueba de ' + r[1];
-  if (/^SABOTAJE/.test(text)) return '⚠ Sensor activado';
-  if (/^Antisabotaje armado/.test(text)) return 'Sensor listo';
-  if (/^Antisabotaje sin armar/.test(text)) return 'Sensor sin colocar';
+  if (/^SABOTAJE/.test(text)) return '⚠ SABOTAJE: despegaron el equipo';
+  if (/^Antisabotaje armado/.test(text)) return 'Antisabotaje armado';
+  if (/^Antisabotaje sin armar/.test(text)) return 'Antisabotaje sin armar';
   if (/^WiFi reconectado/.test(text)) return 'Equipo reconectado';
   if ((r = text.match(/^PIN incorrecto, no se activó(?: \((.+?)\))?/))) return 'PIN incorrecto' + (r[1] ? ' · ' + r[1] : '');
-  if ((r = text.match(/^Estado: ACTIVA(?:, se apaga en (\d+) s)?/))) return 'Estado: encendido' + (r[1] ? ', se corta en ' + r[1] + ' s' : '');
-  if (/^Estado: en reposo/.test(text)) return 'Estado: apagado';
+  if ((r = text.match(/^Estado: ACTIVA(?:, se apaga en (\d+) s)?/))) return 'Estado: ACTIVA' + (r[1] ? ', se apaga en ' + r[1] + ' s' : '');
+  if (/^Estado: en reposo/.test(text)) return 'Estado: en reposo';
   return text.replace(/\. App: .*$/, '');
 }
 
@@ -154,7 +154,7 @@ function fromPico(m, live) {
   } else if (/apagada|en reposo/i.test(text)) {
     on = false; offAt = 0;
   }
-  addLog(disguise(text), m.time);
+  addLog(pretty(text), m.time);
   if (live) offline = false;
   // Respuesta a un comando nuestro: estábamos esperando y (si hay nombre) lo menciona
   const myName = $('name').value.trim();
@@ -217,7 +217,7 @@ async function poll(since, live) {
 
 function needPin() {
   const pin = $('pin').value.trim();
-  if (!pin) { setEditing(true); notice('Poné el PIN para encender'); $('pin').focus(); return null; }
+  if (!pin) { setEditing(true); notice('Poné el PIN para activar'); $('pin').focus(); return null; }
   store('pin', pin);
   return pin;
 }
