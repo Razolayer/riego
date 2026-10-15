@@ -59,6 +59,7 @@ button.link{background:none;border:0;color:#64b5f6;font-size:14px;padding:4px 6p
     <button class="s" data-s="30">30 s</button>
     <button class="s" data-s="60">1 min</button>
   </div>
+  <button class="s" id="beep">&#128276; Pitido de prueba</button>
   <button class="s" id="ping">&#128225; Probar conexión</button>
   <div id="who" hidden>&#128100; <b id="whoname"></b> · &#128274; PIN guardado <button class="link" id="edit">cambiar</button></div>
   <div class="box" id="pinbox">
@@ -149,6 +150,8 @@ function pretty(text) {
   if (/^Pico conectada/.test(text)) return 'Equipo conectado';
   if ((r = text.match(/^Equipo en línea ✅ \(prueba de (.+?)\)/))) return 'Equipo en línea ✅ · prueba de ' + r[1];
   if (/^SABOTAJE/.test(text)) return '⚠ SABOTAJE: despegaron el equipo';
+  if ((r = text.match(/^Pitido de prueba(?: \((.+)\))?/))) return '🔔 Pitido de prueba' + (r[1] ? ' · ' + r[1] : '');
+  if (/^Pitido no/.test(text)) return 'Pitido no: la alarma ya estaba sonando';
   if (/^Antisabotaje armado/.test(text)) return 'Antisabotaje armado';
   if (/^Antisabotaje sin armar/.test(text)) return 'Antisabotaje sin armar';
   if (/^WiFi reconectado/.test(text)) return 'Equipo reconectado';
@@ -176,6 +179,7 @@ function fromPico(m, live) {
   const myName = $('name').value.trim();
   const mine = live && waiting && (!myName || text.includes(myName));
   if (live && waiting) { clearTimeout(waiting); waiting = null; }
+  if (mine && /^Pitido de prueba/.test(text)) { render(); notice('🔔 Pitido enviado', 'ok'); return; }
   if (mine && /^Equipo en línea/.test(text)) { render(); notice('Equipo en línea ✅', 'ok'); return; }
   if (mine && /PIN incorrecto/.test(text)) { $('pin').value = ''; remember(); setEditing(true); notice('PIN incorrecto'); return; }
   render();
@@ -284,6 +288,7 @@ document.addEventListener('visibilitychange', async () => {
 
 $('off').onclick = () => send(by('apagar'));
 $('ping').onclick = () => send(by('ping'));
+$('beep').onclick = () => { const pin = needPin(); if (pin) send(by('pitido ' + pin)); };
 $('big').onclick = () => {
   if (on) return send(by('apagar'));
   const pin = needPin(); if (pin) send(by('activar ' + pin));
