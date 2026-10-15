@@ -58,7 +58,7 @@ small{color:#666;text-align:center}
     <input id="pin" type="password" inputmode="numeric" placeholder="PIN (para encender)">
   </div>
   <ul id="log"></ul>
-  <small>Apagar no pide PIN.</small>
+  <small>Apagar no pide PIN.<br>Completá nombre y PIN antes de agregar a la pantalla de inicio: el botón los recuerda.</small>
 </div>
 
 <script>
@@ -66,8 +66,12 @@ const SERVER = 'https://ntfy-me.com';
 const NO_REPLY_MS = 10000;
 const $ = id => document.getElementById(id);
 
+// Link: #<topic>[&n=<nombre>][&p=<pin>]. Lo que va después del # queda en el celu
+// (en el botón de la pantalla de inicio) y nunca se envía al servidor de la página.
+const hashParts = location.hash.slice(1).split('&');
 let topic = '';
-try { topic = decodeURIComponent(location.hash.slice(1)).trim(); } catch (e) {}
+try { topic = decodeURIComponent(hashParts[0]).trim(); } catch (e) {}
+const hashParams = new URLSearchParams(hashParts.slice(1).join('&'));
 // Sin un link con formato válido no se muestra nada (ni pistas de cómo funciona)
 function validTopic(t) { return /^[a-z0-9][a-z0-9_-]{15,63}$/.test(t); }
 let on = false, offAt = 0, lastSeen = 0, waiting = null, es = null;
@@ -75,6 +79,18 @@ let offline = false, noticeUntil = 0;
 
 function store(k, v) { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch (e) {} }
 function load(k) { try { return localStorage.getItem(k) || ''; } catch (e) { return ''; } }
+
+// Guarda nombre y PIN en la memoria y en el link actual, para que "Agregar a pantalla de inicio" los recuerde
+function remember() {
+  const n = $('name').value.trim(), p = $('pin').value.trim();
+  store('name', n || null);
+  store('pin', p || null);
+  const q = new URLSearchParams();
+  if (n) q.set('n', n);
+  if (p) q.set('p', p);
+  const s = q.toString();
+  history.replaceState(null, '', '#' + topic + (s ? '&' + s : ''));
+}
 
 function show(text, kind) { $('msg').textContent = text; $('dot').className = 'dot ' + kind; }
 // Aviso que no pisa el refresco de estado por unos segundos
@@ -138,7 +154,7 @@ function fromPico(m, live) {
   const myName = $('name').value.trim();
   const mine = live && waiting && (!myName || text.includes(myName));
   if (live && waiting) { clearTimeout(waiting); waiting = null; }
-  if (mine && /PIN incorrecto/.test(text)) { store('pin', null); $('pin').value = ''; notice('PIN incorrecto'); return; }
+  if (mine && /PIN incorrecto/.test(text)) { $('pin').value = ''; remember(); notice('PIN incorrecto'); return; }
   render();
 }
 
@@ -184,8 +200,10 @@ function subscribe() {
 
 async function start() {
   $('controls').hidden = false;
-  $('pin').value = load('pin');
-  $('name').value = load('name');
+  $('pin').value = hashParams.get('p') || load('pin');
+  $('name').value = hashParams.get('n') || load('name');
+  $('pin').oninput = $('name').oninput = remember;
+  remember();
   subscribe();
   // Último estado conocido (últimos 30 min) y pedido de estado fresco
   try {
