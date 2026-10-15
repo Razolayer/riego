@@ -42,6 +42,7 @@ small{color:#666;text-align:center}
 #invalid{color:#888;margin:40px 0 0;text-align:center}
 #who{color:#bbb;font-size:15px;text-align:center}
 button.link{background:none;border:0;color:#64b5f6;font-size:14px;padding:4px 6px}
+#wifibox{width:min(92vw,360px)}
 </style>
 </head>
 <body>
@@ -66,6 +67,16 @@ button.link{background:none;border:0;color:#64b5f6;font-size:14px;padding:4px 6p
     <button class="s" id="savewho">Listo</button>
   </div>
   <ul id="log"></ul>
+  <button class="link" id="wifiopen">&#128246; Cambiar el WiFi del equipo (por sonido)</button>
+  <div class="box" id="wifibox" hidden>
+    <input id="ssid" placeholder="Nombre de la red (2.4 GHz)" maxlength="32" autocomplete="off" autocapitalize="off" spellcheck="false">
+    <input id="wpass" type="password" placeholder="Clave del WiFi" maxlength="63" autocomplete="off">
+    <div class="row">
+      <button class="s" id="sndsend">&#128266; Enviar</button>
+      <button class="s" id="sndtest">Probar tono</button>
+    </div>
+    <small id="sndmsg">Solo funciona cuando el equipo no encuentra su WiFi (la luz hace doble parpadeo). Acercá el parlante del celu a unos 10 cm del micrófono, con el volumen al máximo (en iPhone, sin modo silencio).</small>
+  </div>
   <small>Apagar no pide PIN.<span id="hint"><br>Completá nombre y PIN, tocá Listo y después agregalo a la pantalla de inicio: el botón los recuerda.</span></small>
 </div>
 
@@ -280,6 +291,99 @@ $('big').onclick = () => {
 document.querySelectorAll('[data-s]').forEach(b => b.onclick = () => {
   const pin = needPin(); if (pin) send(by('pulso ' + b.dataset.s + ' ' + pin));
 });
+// ---- WiFi por sonido: 4-FSK, 2 bits por tono, 50 tonos/s (ver sonic.h en el firmware) ----
+const SND_TONES = [1400, 2000, 2600, 3200]; // 00, 01, 11, 10 (código Gray)
+const SND_SYM = 0.02;
+let actx = null, sndStop = null;
+
+function crc16(bytes) {
+  let crc = 0xFFFF;
+  for (const b of bytes) {
+    crc ^= b << 8;
+    for (let i = 0; i < 8; i++) crc = (crc & 0x8000 ? (crc << 1) ^ 0x1021 : crc << 1) & 0xFFFF;
+  }
+  return crc;
+}
+
+// Trama: preámbulo + 0x7E 0xA5 + len + 'W' PIN \0 SSID \0 CLAVE + CRC16 -> lista de tonos
+function sndFrame(pin, ssid, pass) {
+  const enc = s => [...new TextEncoder().encode(s)];
+  const payload = [0x57, ...enc(pin), 0, ...enc(ssid), 0, ...enc(pass)];
+  const body = [payload.length, ...payload];
+  const c = crc16(body);
+  const tones = [];
+  for (let i = 0; i < 10; i++) tones.push(0, 3);
+  for (const b of [0x7E, 0xA5, ...body, c >> 8, c & 0xFF]) {
+    for (const sh of [6, 4, 2, 0]) { const bits = (b >> sh) & 3; tones.push(bits ^ (bits >> 1)); }
+  }
+  return tones;
+}
+
+// Reproduce tramos de tonos separados por silencios; fase continua (un solo oscilador)
+function sndPlay(parts, symDur, onEnd) {
+  actx = actx || new (window.AudioContext || window.webkitAudioContext)();
+  actx.resume();
+  const osc = actx.createOscillator(), gain = actx.createGain();
+  osc.connect(gain);
+  gain.connect(actx.destination);
+  const g = gain.gain;
+  let t = actx.currentTime + 0.15;
+  const start = t;
+  g.setValueAtTime(0, 0);
+  for (const tones of parts) {
+    osc.frequency.setValueAtTime(SND_TONES[tones[0]], t);
+    g.setValueAtTime(0, t);
+    g.linearRampToValueAtTime(0.9, t + 0.005);
+    tones.forEach((tone, i) => osc.frequency.setValueAtTime(SND_TONES[tone], t + i * symDur));
+    t += tones.length * symDur;
+    g.setValueAtTime(0.9, t - 0.005);
+    g.linearRampToValueAtTime(0, t);
+    t += 0.4; // silencio entre repeticiones
+  }
+  osc.start(start);
+  osc.stop(t);
+  const total = t - start;
+  const timer = setInterval(() => {
+    const left = Math.max(0, Math.ceil(start + total - actx.currentTime));
+    $('sndmsg').textContent = 'Transmitiendo... ' + left + ' s. No bloquees la pantalla.';
+  }, 250);
+  const finish = done => {
+    clearInterval(timer);
+    osc.onended = null;
+    try { osc.stop(); } catch (e) {}
+    sndStop = null;
+    $('sndsend').textContent = '🔊 Enviar';
+    $('sndtest').disabled = false;
+    onEnd(done);
+  };
+  osc.onended = () => finish(true);
+  sndStop = () => finish(false);
+}
+
+$('wifiopen').onclick = () => { $('wifibox').hidden = !$('wifibox').hidden; if (!$('wifibox').hidden) $('ssid').focus(); };
+$('sndsend').onclick = () => {
+  if (sndStop) return sndStop();
+  const ssid = $('ssid').value.trim(), pass = $('wpass').value;
+  const len = s => new TextEncoder().encode(s).length;
+  if (!ssid || len(ssid) > 32) return notice('Nombre de red inválido');
+  if (pass && (len(pass) < 8 || len(pass) > 63)) return notice('La clave tiene que tener entre 8 y 63 caracteres');
+  const pin = needPin(); if (!pin) return;
+  const frame = sndFrame(pin, ssid, pass);
+  $('sndsend').textContent = '⏹ Detener';
+  $('sndtest').disabled = true;
+  sndPlay([frame, frame], SND_SYM, done => {
+    $('sndmsg').textContent = done
+      ? 'Listo. Si lo recibió, la luz parpadea rápido y en un minuto llega el aviso "WiFi cambiado". Si no, acercá el celu y probá de nuevo.'
+      : 'Transmisión cancelada.';
+  });
+};
+$('sndtest').onclick = () => {
+  $('sndtest').disabled = true;
+  sndPlay([[0, 1, 2, 3, 0, 1, 2, 3]], 0.4, () => {
+    $('sndmsg').textContent = 'Tono de prueba terminado (con SONIC_DEBUG el monitor serie muestra el nivel recibido).';
+  });
+};
+
 window.addEventListener('hashchange', () => location.reload());
 if (validTopic(topic)) setInterval(render, 1000);
 
