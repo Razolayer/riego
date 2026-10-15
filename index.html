@@ -176,9 +176,11 @@ async function send(message, priority) {
   if (navigator.vibrate) navigator.vibrate(40);
   const url = SERVER + '/' + encodeURIComponent(topic) + '/publish?message=' + encodeURIComponent(message) +
               '&priority=' + (priority || 1); // los comandos no notifican: solo las respuestas de la Pico
+  let sentId = '';
   try {
     const r = await fetch(url, { cache: 'no-store' });
     if (!r.ok) throw new Error(r.status);
+    sentId = (await r.json()).id || '';
   } catch (e) {
     notice('No se pudo enviar (¿sin internet?)');
     return;
@@ -186,6 +188,31 @@ async function send(message, priority) {
   clearTimeout(waiting);
   show('Enviado, esperando respuesta...', 'wait');
   waiting = setTimeout(() => { waiting = null; offline = true; render(); }, NO_REPLY_MS);
+  // En el celu la conexión en vivo (SSE) puede estar cortada sin avisar:
+  // además de escucharla, preguntamos por la respuesta hasta que llegue.
+  const deadline = Date.now() + NO_REPLY_MS;
+  while (waiting && Date.now() < deadline) {
+    await new Promise(res => setTimeout(res, 1500));
+    if (waiting && sentId) await poll(sentId, true);
+  }
+}
+
+// Procesa cada mensaje una sola vez (puede llegar por SSE y por consulta)
+const seen = new Set();
+let lastId = '';
+function handle(m, live) {
+  if (m.event !== 'message' || seen.has(m.id)) return;
+  seen.add(m.id);
+  lastId = m.id;
+  if ((m.tags || []).includes('pico')) fromPico(m, live);
+}
+
+async function poll(since, live) {
+  try {
+    const r = await fetch(SERVER + '/' + encodeURIComponent(topic) + '/json?poll=1&since=' + encodeURIComponent(since),
+                          { cache: 'no-store' });
+    (await r.text()).trim().split('\n').filter(Boolean).forEach(l => handle(JSON.parse(l), live));
+  } catch (e) {}
 }
 
 function needPin() {
@@ -198,10 +225,7 @@ function needPin() {
 function subscribe() {
   if (es) es.close();
   es = new EventSource(SERVER + '/' + encodeURIComponent(topic) + '/sse');
-  es.onmessage = ev => {
-    const m = JSON.parse(ev.data);
-    if (m.event === 'message' && (m.tags || []).includes('pico')) fromPico(m, true);
-  };
+  es.onmessage = ev => handle(JSON.parse(ev.data), true);
   es.onerror = () => { if (!waiting) show('Reconectando con ntfy...', 'wait'); };
 }
 
@@ -228,14 +252,19 @@ async function start() {
   };
   subscribe();
   // Último estado conocido (últimos 30 min) y pedido de estado fresco
-  try {
-    const r = await fetch(SERVER + '/' + encodeURIComponent(topic) + '/json?poll=1&since=30m', { cache: 'no-store' });
-    const lines = (await r.text()).trim().split('\n').filter(Boolean).map(l => JSON.parse(l));
-    lines.filter(m => m.event === 'message' && (m.tags || []).includes('pico')).forEach(m => fromPico(m, false));
-  } catch (e) {}
+  await poll('30m', false);
   render();
   send('estado', 1);
 }
+
+// Al volver a la app (iPhone la congela en segundo plano): reconectar y ponerse al día
+document.addEventListener('visibilitychange', async () => {
+  if (document.hidden || !validTopic(topic)) return;
+  subscribe();
+  await poll(lastId || '30m', false);
+  render();
+  send('estado', 1);
+});
 
 $('off').onclick = () => send(by('apagar'));
 $('ping').onclick = () => send(by('ping'));
