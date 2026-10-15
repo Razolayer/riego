@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#111">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Riego">
+<meta name="robots" content="noindex">
+<title>Riego</title>
+<!--
+  Control remoto vía ntfy.
+  El topic NO está en este archivo: va en el link, después del #
+  (https://.../#mi-topic). El fragmento no se envía al servidor de la página.
+-->
+<style>
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+[hidden]{display:none!important}
+#controls{display:contents}
+body{margin:0;min-height:100vh;font-family:system-ui,sans-serif;background:#111;color:#eee;
+display:flex;flex-direction:column;align-items:center;gap:22px;
+padding:calc(28px + env(safe-area-inset-top)) 16px calc(28px + env(safe-area-inset-bottom))}
+h1{margin:0;font-size:22px;font-weight:600;letter-spacing:.5px}
+#st{font-size:15px;color:#aaa;min-height:20px;text-align:center;max-width:320px}
+#big{width:min(70vw,260px);aspect-ratio:1;border-radius:50%;border:0;font-size:26px;font-weight:700;
+color:#fff;background:#2b2b2b;box-shadow:0 0 0 6px #333;transition:.2s}
+#big.on{background:#1976d2;box-shadow:0 0 0 6px #64b5f6,0 0 40px #42a5f5;animation:p 1.6s infinite}
+@keyframes p{50%{box-shadow:0 0 0 10px #64b5f6,0 0 60px #42a5f5}}
+.row{display:flex;gap:10px;flex-wrap:wrap;justify-content:center}
+button.s{padding:12px 18px;border-radius:12px;border:1px solid #444;background:#1d1d1d;color:#eee;font-size:16px}
+button:active{transform:scale(.96)}
+button:disabled{opacity:.5}
+#off{background:#455a64;border-color:#455a64;width:min(80vw,300px);font-size:20px;padding:16px;font-weight:600}
+.box{display:flex;gap:8px;flex-wrap:wrap;justify-content:center}
+input{padding:12px;border-radius:12px;border:1px solid #444;background:#1d1d1d;color:#eee;font-size:16px;
+width:200px;text-align:center}
+.dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:#777;margin-right:6px}
+.ok{background:#4caf50}.bad{background:#f44336}.wait{background:#ffb300}
+#log{width:min(92vw,360px);font-size:13px;color:#999;list-style:none;padding:0;margin:0}
+#log li{padding:6px 0;border-top:1px solid #222}
+#log time{color:#666;margin-right:6px}
+small{color:#666;text-align:center}
+</style>
+</head>
+<body>
+<h1>&#128167; Riego</h1>
+<div id="st"><span class="dot wait" id="dot"></span><span id="msg">Conectando...</span></div>
+
+<div class="box" id="topicbox" hidden>
+  <input id="topic" placeholder="Topic de ntfy" autocapitalize="off" autocomplete="off" spellcheck="false">
+  <button class="s" id="savetopic">Entrar</button>
+</div>
+
+<div id="controls" hidden>
+  <button class="s" id="off">APAGAR</button>
+  <button id="big">ENCENDER</button>
+  <div class="row">
+    <button class="s" data-s="5">5 s</button>
+    <button class="s" data-s="30">30 s</button>
+    <button class="s" data-s="60">1 min</button>
+  </div>
+  <div class="box" id="pinbox">
+    <input id="name" placeholder="Tu nombre" maxlength="24" autocomplete="name">
+    <input id="pin" type="password" inputmode="numeric" placeholder="PIN (para encender)">
+  </div>
+  <ul id="log"></ul>
+  <small>Apagar no pide PIN.</small>
+</div>
+
+<script>
+const SERVER = 'https://ntfy-me.com';
+const NO_REPLY_MS = 10000;
+const $ = id => document.getElementById(id);
+
+let topic = decodeURIComponent(location.hash.slice(1)).trim();
+let on = false, offAt = 0, lastSeen = 0, waiting = null, es = null;
+let offline = false, noticeUntil = 0;
+
+function store(k, v) { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch (e) {} }
+function load(k) { try { return localStorage.getItem(k) || ''; } catch (e) { return ''; } }
+
+function show(text, kind) { $('msg').textContent = text; $('dot').className = 'dot ' + kind; }
+// Aviso que no pisa el refresco de estado por unos segundos
+function notice(text) { show(text, 'bad'); noticeUntil = Date.now() + 5000; }
+
+function render() {
+  const rem = offAt ? Math.max(0, Math.round(offAt - Date.now() / 1000)) : 0;
+  if (on && offAt && rem === 0) on = false; // el corte automático ya debería haber actuado
+  $('big').classList.toggle('on', on);
+  $('big').textContent = on ? 'ENCENDIDO' : 'ENCENDER';
+  if (waiting || Date.now() < noticeUntil) return;
+  if (offline) { show('El equipo no responde (¿sin luz o sin internet?)', 'bad'); return; }
+  if (!lastSeen) { show('Esperando respuesta del equipo...', 'wait'); return; }
+  show(on ? (rem ? 'Encendido, se corta en ' + rem + ' s' : 'Encendido') : 'Apagado', 'ok');
+}
+
+function addLog(text, t) {
+  const li = document.createElement('li');
+  const time = document.createElement('time');
+  time.textContent = new Date(t * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  li.append(time, text);
+  $('log').prepend(li);
+  while ($('log').children.length > 6) $('log').lastChild.remove();
+}
+
+// Texto neutro para los mensajes del equipo
+function disguise(text) {
+  let r;
+  if (/ACTIVADA/.test(text)) {
+    r = text.match(/desde (.+?) \(se apaga en (\d+) s\)/);
+    return 'Encendido' + (r ? ' por ' + r[2] + ' s · ' + r[1] : '');
+  }
+  if ((r = text.match(/^Ya estaba apagada(?: \((.+)\))?/))) return 'Ya estaba apagado' + (r[1] ? ' · ' + r[1] : '');
+  if ((r = text.match(/apagada \((.+)\)/))) return 'Apagado · ' + r[1];
+  if (/^Pico conectada/.test(text)) return 'Equipo conectado';
+  if (/^SABOTAJE/.test(text)) return '⚠ Sensor activado';
+  if (/^Antisabotaje armado/.test(text)) return 'Sensor listo';
+  if (/^Antisabotaje sin armar/.test(text)) return 'Sensor sin colocar';
+  if (/^WiFi reconectado/.test(text)) return 'Equipo reconectado';
+  if ((r = text.match(/^PIN incorrecto, no se activó(?: \((.+?)\))?/))) return 'PIN incorrecto' + (r[1] ? ' · ' + r[1] : '');
+  if ((r = text.match(/^Estado: ACTIVA(?:, se apaga en (\d+) s)?/))) return 'Estado: encendido' + (r[1] ? ', se corta en ' + r[1] + ' s' : '');
+  if (/^Estado: en reposo/.test(text)) return 'Estado: apagado';
+  return text.replace(/\. App: .*$/, '');
+}
+
+// Interpreta los mensajes que publica el equipo (tag "pico")
+function fromPico(m, live) {
+  const text = m.message || '';
+  lastSeen = m.time;
+  let r;
+  if (/ACTIVADA/.test(text) || /^Estado: ACTIVA/.test(text)) {
+    on = true;
+    r = text.match(/se apaga en (\d+) s/);
+    offAt = r ? m.time + Number(r[1]) : 0;
+  } else if (/apagada|en reposo/i.test(text)) {
+    on = false; offAt = 0;
+  }
+  addLog(disguise(text), m.time);
+  if (live) offline = false;
+  // Respuesta a un comando nuestro: estábamos esperando y (si hay nombre) lo menciona
+  const myName = $('name').value.trim();
+  const mine = live && waiting && (!myName || text.includes(myName));
+  if (live && waiting) { clearTimeout(waiting); waiting = null; }
+  if (mine && /PIN incorrecto/.test(text)) { store('pin', null); $('pin').value = ''; notice('PIN incorrecto'); return; }
+  render();
+}
+
+// Agrega " por <nombre>" para que la Pico avise quién fue
+function by(message) {
+  const n = $('name').value.trim();
+  store('name', n || null);
+  return n ? message + ' por ' + n : message;
+}
+
+async function send(message, priority) {
+  if (navigator.vibrate) navigator.vibrate(40);
+  const url = SERVER + '/' + encodeURIComponent(topic) + '/publish?message=' + encodeURIComponent(message) +
+              (priority ? '&priority=' + priority : '');
+  try {
+    const r = await fetch(url, { cache: 'no-store' });
+    if (!r.ok) throw new Error(r.status);
+  } catch (e) {
+    notice('No se pudo enviar (¿sin internet?)');
+    return;
+  }
+  clearTimeout(waiting);
+  show('Enviado, esperando respuesta...', 'wait');
+  waiting = setTimeout(() => { waiting = null; offline = true; render(); }, NO_REPLY_MS);
+}
+
+function needPin() {
+  const pin = $('pin').value.trim();
+  if (!pin) { notice('Poné el PIN para encender'); $('pin').focus(); return null; }
+  store('pin', pin);
+  return pin;
+}
+
+function subscribe() {
+  if (es) es.close();
+  es = new EventSource(SERVER + '/' + encodeURIComponent(topic) + '/sse');
+  es.onmessage = ev => {
+    const m = JSON.parse(ev.data);
+    if (m.event === 'message' && (m.tags || []).includes('pico')) fromPico(m, true);
+  };
+  es.onerror = () => { if (!waiting) show('Reconectando con ntfy...', 'wait'); };
+}
+
+async function start() {
+  $('topicbox').hidden = true;
+  $('controls').hidden = false;
+  $('pin').value = load('pin');
+  $('name').value = load('name');
+  subscribe();
+  // Último estado conocido (últimos 30 min) y pedido de estado fresco
+  try {
+    const r = await fetch(SERVER + '/' + encodeURIComponent(topic) + '/json?poll=1&since=30m', { cache: 'no-store' });
+    const lines = (await r.text()).trim().split('\n').filter(Boolean).map(l => JSON.parse(l));
+    lines.filter(m => m.event === 'message' && (m.tags || []).includes('pico')).forEach(m => fromPico(m, false));
+  } catch (e) {}
+  render();
+  send('estado', 1);
+}
+
+$('off').onclick = () => send(by('apagar'));
+$('big').onclick = () => {
+  if (on) return send(by('apagar'));
+  const pin = needPin(); if (pin) send(by('activar ' + pin));
+};
+document.querySelectorAll('[data-s]').forEach(b => b.onclick = () => {
+  const pin = needPin(); if (pin) send(by('pulso ' + b.dataset.s + ' ' + pin));
+});
+$('savetopic').onclick = () => {
+  topic = $('topic').value.trim();
+  if (!topic) return;
+  location.hash = encodeURIComponent(topic);
+  start();
+};
+window.addEventListener('hashchange', () => {
+  const t = decodeURIComponent(location.hash.slice(1)).trim();
+  if (t && t !== topic) { topic = t; start(); }
+});
+setInterval(render, 1000);
+
+if (topic) start();
+else { $('topicbox').hidden = false; show('Falta el topic: abrí el link completo o escribilo', 'bad'); }
+</script>
+</body>
+</html>
